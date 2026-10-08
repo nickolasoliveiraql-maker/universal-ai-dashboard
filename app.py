@@ -2,9 +2,8 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-# 1. Configuração da Página e Estilo Dark Mode
-st.set_title = "AI Analytics Engine"
-st.set_page_config(layout="wide")
+# 1. Configuração de Estilo do Dashboard (Dark Mode)
+st.set_page_config(layout="wide", page_title="Dashboard de Custos")
 st.markdown(
     """
     <style>
@@ -15,125 +14,110 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.title("🤖 Universal AI Analytics Engine")
-st.markdown("Upload any structured corporate Excel sheet to dynamically generate a dashboard.")
+st.title("📊 Dashboard Executivo — Custos da não Qualidade")
+st.markdown("Arraste e solte o arquivo original para atualizar os indicadores financeiros em tempo real.")
 
-# 2. Upload de Arquivos
-uploaded_file = st.file_uploader("Drag and drop your Excel file here (.xlsx)", type=["xlsx"])
+# 2. Componente de Upload do Arquivo
+uploaded_file = st.file_uploader("Arraste o seu arquivo Excel aqui (.xlsx)", type=["xlsx"])
 
-def find_and_clean_table(file):
-    df_raw = pd.read_excel(file, header=None)
+def processar_planilha_custos(file):
+    # Pular as primeiras 6 linhas de metadados para focar no cabeçalho real da linha 7
+    df = pd.read_excel(file, skiprows=6)
     
-    best_row = 0
-    max_filled = 0
-    for idx, row in df_raw.head(15).iterrows():
-        filled = row.notna().sum()
-        if filled > max_filled:
-            max_filled = filled
-            best_row = idx
-            
-    df = pd.read_excel(file, skiprows=best_row)
+    # Limpar espaços em branco invisíveis no início ou fim dos títulos das colunas
     df.columns = [str(c).strip() for c in df.columns]
-    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
-    df = df.dropna(how='all')
     
-    for col in df.columns:
-        df = df[~df[col].astype(str).str.upper().str.contains('TOTAL', na=False)]
-    return df
+    # Criar um dicionário de mapeamento exato com base nas colunas físicas da sua imagem
+    mapeamento_colunas = {
+        'Projeto': [c for c in df.columns if 'PROJETO' in c.upper()][0] if [c for c in df.columns if 'PROJETO' in c.upper()] else None,
+        'Valor': [c for c in df.columns if 'VALOR' in c.upper()][0] if [c for c in df.columns if 'VALOR' in c.upper()] else None,
+        'Periodo': [c for c in df.columns if 'PERÍODO' in c.upper() or 'PERIODO' in c.upper()][0] if [c for c in df.columns if 'PERÍODO' in c.upper() or 'PERIODO' in c.upper()] else None,
+        'Empresa': [c for c in df.columns if 'EMPRESA' in c.upper()][0] if [c for c in df.columns if 'EMPRESA' in c.upper()] else None,
+        'Custo_Com': [c for c in df.columns if 'CUSTO' in c.upper()][0] if [c for c in df.columns if 'CUSTO' in c.upper()] else None
+    }
+    
+    # Validar se as colunas essenciais foram encontradas
+    if not mapeamento_colunas['Valor'] or not mapeamento_colunas['Periodo']:
+        return pd.DataFrame(), None, None, None, None, None
 
-def auto_map_columns(df):
-    col_val, col_text, col_period = None, [], None
-    time_keywords = ['MÊS', 'MES', 'PERÍODO', 'PERIODO', 'DATA', 'WEEK', 'SEMANA', 'DIA', 'SERVIÇO', 'SERVICO']
-    val_keywords = ['VALOR', 'PREÇO', 'PRECO', 'CUSTO', 'TOTAL', 'HORAS', 'REAIS']
+    c_prj = mapeamento_colunas['Projeto']
+    c_val = mapeamento_colunas['Valor']
+    c_per = mapeamento_colunas['Periodo']
+    c_emp = mapeamento_colunas['Empresa']
+    c_cst = mapeamento_colunas['Custo_Com']
 
-    for col in df.columns:
-        col_upper = col.upper()
-        if any(pt in col_upper for pt in time_keywords):
-            col_period = col
-            continue
-        if any(pv in col_upper for pv in val_keywords) or pd.api.types.is_numeric_dtype(df[col]):
-            col_val = col
-            continue
-        if df[col].dtype == 'object' and df[col].nunique() < 25:
-            col_text.append(col)
-            
-    if not col_val:
-        cols_num = df.select_dtypes(include=['number']).columns
-        if len(cols_num) > 0: col_val = cols_num[0]
-    if not col_text:
-        cols_obj = df.select_dtypes(include=['object']).columns
-        col_text = list(cols_obj[:2])
-        
-    return col_val, col_text, col_period
+    # 🛠️ Limpeza profunda dos valores monetários (mantém o sinal negativo de créditos de Setembro)
+    df[c_val] = df[c_val].astype(str).str.replace('R$', '', regex=False).str.replace(' ', '', regex=False)
+    df[c_val] = df[c_val].str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+    df[c_val] = pd.to_numeric(df[c_val].str.strip(), errors='coerce').fillna(0)
+    
+    # Eliminar linhas de totalizadores amarelos do rodapé para evitar duplicações
+    df = df[df[c_per].notna()]
+    df = df[~df[c_per].astype(str).str.upper().str.contains('TOTAL', na=False)]
+    df = df[~df[c_val].astype(str).str.upper().str.contains('TOTAL', na=False)]
+    
+    return df, c_val, c_per, c_emp, c_cst, c_prj
 
-# 3. Processamento dos Dados
+# 3. Renderização da Interface e Filtros
 if uploaded_file is not None:
     try:
-        df = find_and_clean_table(uploaded_file)
-        c_val, c_txt, c_per = auto_map_columns(df)
+        df, c_val, c_per, c_emp, c_cst, c_prj = processar_planilha_custos(uploaded_file)
         
-        if c_val:
-            # Garante que c_val seja uma string única de coluna
-            if isinstance(c_val, list) or hasattr(c_val, 'tolist'):
-                c_val = c_val[0]
-                
-            # Limpar e converter valores financeiros/horas de forma segura
-            df[c_val] = df[c_val].astype(str).str.replace('R$', '', regex=False).str.replace(' ', '', regex=False)
-            df[c_val] = df[c_val].str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-            df[c_val] = pd.to_numeric(df[c_val].str.strip(), errors='coerce').fillna(0)
-
-            st.markdown("### 🎛️ Data Slicers")
-            col_f1, col_f2 = st.columns(2)
+        if not df.empty:
+            st.markdown("### 🎛️ Segmentação de Dados (Filtros Avançados)")
+            col_f1, col_f2, col_f3 = st.columns(3)
             
-            # Definir nomes de colunas de texto de forma estrita para evitar o erro de DataFrame
-            lbl_f1 = c_txt[0] if (isinstance(c_txt, list) and len(c_txt) > 0) else str(c_txt)
-            if lbl_f1 not in df.columns:
-                lbl_f1 = df.columns[0]
-                
             with col_f1:
-                opts_f1 = ["Todos"] + list(df[lbl_f1].astype(str).unique())
-                f1_select = st.selectbox(f"Filter by {lbl_f1}", opts_f1)
-                
-            lbl_f2 = c_per if c_per else (c_txt[1] if (isinstance(c_txt, list) and len(c_txt) > 1) else df.columns[-1])
-            if lbl_f2 not in df.columns or lbl_f2 == lbl_f1:
-                lbl_f2 = df.columns[-1]
+                # Ordenação cronológica correta dos meses no filtro suspenso (Janeiro a Dezembro)
+                ordem_meses = ['JANEIRO', 'FEVEREIRO', 'MARÇO', 'ABRIL', 'MAIO', 'JUNHO', 'JULHO', 'AGOSTO', 'SETEMBRO', 'OUTUBRO', 'NOVEMBRO', 'DEZEMBRO']
+                meses_ativos = [m for m in ordem_meses if m in df[c_per].astype(str).str.upper().str.strip().unique()]
+                opts_per = ["Todos"] + meses_ativos
+                f_per = st.selectbox("Filtrar por Mês (Período)", opts_per)
                 
             with col_f2:
-                opts_f2 = ["Todos"] + list(df[lbl_f2].astype(str).unique())
-                f2_select = st.selectbox(f"Filter by {lbl_f2}", opts_f2)
+                opts_emp = ["Todos"] + sorted(list(df[c_emp].astype(str).str.upper().str.strip().unique())) if c_emp else ["Todos"]
+                f_emp = st.selectbox("Filtrar por Empresa", opts_emp)
+                
+            with col_f3:
+                opts_cst = ["Todos"] + sorted(list(df[c_cst].astype(str).str.upper().str.strip().unique())) if c_cst else ["Todos"]
+                f_cst = st.selectbox("Filtrar por Tipo de Custo", opts_cst)
 
-            # Aplicar filtros na base de dados
-            if f1_select != "Todos":
-                df = df[df[lbl_f1].astype(str) == f1_select]
-            if f2_select != "Todos":
-                df = df[df[lbl_f2].astype(str) == f2_select]
+            # Aplicação dos Filtros Cruzados Dinâmicos
+            if f_per != "Todos":
+                df = df[df[c_per].astype(str).str.upper().str.strip() == f_per]
+            if f_emp != "Todos" and c_emp:
+                df = df[df[c_emp].astype(str).str.upper().str.strip() == f_emp]
+            if f_cst != "Todos" and c_cst:
+                df = df[df[c_cst].astype(str).str.upper().str.strip() == f_cst]
 
-            # 4. Cartões de Indicadores
-            total_sum = df[c_val].sum()
-            is_finance = any(x in str(c_val).upper() for x in ['VALOR', 'PREÇO', 'PRECO', 'CUSTO', 'REAIS'])
-            formatted_sum = f"R$ {total_sum:,.2f}" if is_finance else f"{total_sum:.1f}"
+            # 4. Cartões de Indicadores Financeiros
+            total_financeiro = df[c_val].sum()
+            total_linhas = len(df)
+            maior_lancamento = df[c_val].max() if total_linhas > 0 else 0.0
             
-            c_card1, c_card2 = st.columns(2)
-            c_card1.metric(label=f"Accumulated Metrics ({c_val})", value=formatted_sum)
-            c_card2.metric(label="Total Volumetric Rows", value=len(df))
+            c_card1, c_card2, c_card3 = st.columns(3)
+            c_card1.metric(label="Custo Total Acumulado", value=f"R$ {total_financeiro:,.2f}")
+            c_card2.metric(label="Lançamentos Filtrados", value=f"{total_linhas} Registros")
+            c_card3.metric(label="Maior Valor no Escopo", value=f"R$ {maior_lancamento:,.2f}")
 
-            # 5. Gráfico de Barras Horizontal Dinâmico
-            grp_col = lbl_f2 if lbl_f2 in df.columns else lbl_f1
-            df_grp = df.groupby(grp_col)[c_val].sum().reset_index()
-            df_grp[grp_col] = df_grp[grp_col].astype(str)
+            # 5. Gráfico Dinâmico por Projeto (VW vs GM)
+            st.markdown("---")
+            eixo_y = c_prj if c_prj else c_emp
+            df_grp = df.groupby(eixo_y)[c_val].sum().reset_index().sort_values(by=c_val, ascending=True)
             
             fig = go.Figure(go.Bar(
-                y=df_grp[grp_col], x=df_grp[c_val], orientation='h', marker_color='#2563EB',
-                text=[f"R$ {x:,.2f}" if is_finance else f"{x:.1f}" for x in df_grp[c_val]], textposition='inside',
-                textfont=dict(color='white', weight='bold')
+                y=df_grp[eixo_y].astype(str), x=df_grp[c_val], orientation='h', marker_color='#2563EB',
+                text=[f"R$ {x:,.2f}" for x in df_grp[c_val]], textposition='inside',
+                textfont=dict(color='white', size=11, weight='bold')
             ))
+            
             fig.update_layout(
-                paper_bgcolor='#1E1F22', plot_bgcolor='#1E1F22', font=dict(color='white'), height=350,
-                xaxis=dict(title=f"Total Dynamic {c_val}", gridcolor='#2F3136'), yaxis=dict(gridcolor='rgba(0,0,0,0)'),
+                paper_bgcolor='#1E1F22', plot_bgcolor='#1E1F22', font=dict(color='white'), height=320,
+                xaxis=dict(title="Custo Total Acumulado (R$)", gridcolor='#2F3136', zerolinecolor='#2F3136'),
+                yaxis=dict(gridcolor='rgba(0,0,0,0)'),
                 margin=dict(l=120, r=20, t=10, b=20)
             )
             st.plotly_chart(fig, use_container_width=True)
             
     except Exception as e:
-        st.error(f"Structure Conflict: Ensure columns are unmerged and clean. Error log: {e}")
-
+        st.error(f"⚠️ Erro de Leitura: Verifique se as colunas originais da imagem foram alteradas. Log: {e}")
