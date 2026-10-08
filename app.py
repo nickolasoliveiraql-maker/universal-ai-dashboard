@@ -47,12 +47,23 @@ def processar_planilha_custos(file):
     if not c_val or not c_per:
         return pd.DataFrame(), None, None, None, None, None
 
-    # Limpeza e conversão matemática blindada da moeda
+    # 🛠️ CALIBRAÇÃO REGIONAL DA MOEDA (Evita inflar os valores dos milhares)
     df[c_val] = df[c_val].astype(str).str.replace('R$', '', regex=False).str.replace(' ', '', regex=False)
-    df[c_val] = df[c_val].str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-    df[c_val] = pd.to_numeric(df[c_val].str.strip(), errors='coerce').fillna(0)
     
-    # Remover nulos e totalizadores
+    # Se o texto contiver vírgula, significa que está no padrão brasileiro (1.246,15)
+    def converter_moeda_br(val_texto):
+        try:
+            if ',' in val_texto:
+                # Remove o ponto do milhar e troca a vírgula decimal por ponto
+                val_texto = val_texto.replace('.', '').replace(',', '.')
+            return float(val_texto)
+        except:
+            return 0.0
+
+    df[c_val] = df[c_val].apply(converter_moeda_br)
+    df[c_val] = pd.to_numeric(df[c_val], errors='coerce').fillna(0)
+    
+    # Remover nulos e totalizadores fixos do Excel
     df = df[df[c_per].notna()]
     df = df[~df[c_per].astype(str).str.upper().str.contains('TOTAL', na=False)]
     df = df[~df[c_val].astype(str).str.upper().str.contains('TOTAL', na=False)]
@@ -70,18 +81,15 @@ if uploaded_file is not None:
             
             with col_f1:
                 ordem_meses = ['JANEIRO', 'FEVEREIRO', 'MARÇO', 'ABRIL', 'MAIO', 'JUNHO', 'JULHO', 'AGOSTO', 'SETEMBRO', 'OUTUBRO', 'NOVEMBRO', 'DEZEMBRO']
-                # Tratamento: Força todo elemento a virar string para não quebrar a comparação do Python
                 meses_ativos = [m for m in ordem_meses if m in df[c_per].astype(str).str.upper().str.strip().unique()]
                 opts_per = ["Todos"] + meses_ativos
                 f_per = st.selectbox("Filtrar por Mês (Período)", opts_per)
                 
             with col_f2:
-                # CORREÇÃO: Forçado .astype(str) e removida a função sorted() perigosa
                 opts_emp = ["Todos"] + list(df[c_emp].astype(str).str.upper().str.strip().unique())
                 f_emp = st.selectbox("Filtrar por Empresa", opts_emp)
                 
             with col_f3:
-                # CORREÇÃO: Forçado .astype(str) e removida a função sorted() perigosa
                 opts_cst = ["Todos"] + list(df[c_cst].astype(str).str.upper().str.strip().unique())
                 f_cst = st.selectbox("Filtrar por Tipo de Custo", opts_cst)
 
@@ -99,9 +107,12 @@ if uploaded_file is not None:
             maior_lancamento = df[c_val].max() if total_linhas > 0 else 0.0
             
             c_card1, c_card2, c_card3 = st.columns(3)
-            st.metric(label="Custo Total Acumulado", value=f"R$ {total_financeiro:,.2f}")
-            st.metric(label="Lançamentos Filtrados", value=f"{total_linhas} Registros")
-            st.metric(label="Maior Valor no Escopo", value=f"R$ {maior_lancamento:,.2f}")
+            with c_card1:
+                st.metric(label="Custo Total Acumulado", value=f"R$ {total_financeiro:,.2f}")
+            with c_card2:
+                st.metric(label="Lançamentos Filtrados", value=f"{total_linhas} Registros")
+            with c_card3:
+                st.metric(label="Maior Valor no Escopo", value=f"R$ {maior_lancamento:,.2f}")
 
             # 5. Gráficos Executivos Lado a Lado (Barras por Marca + Pizza por Tipo de Custo)
             st.markdown("---")
@@ -110,7 +121,7 @@ if uploaded_file is not None:
             with graph_col1:
                 st.markdown("#### Distribuição Financeira por Projeto")
                 if c_prj and c_prj in df.columns:
-                    df_grp_bar = df.groupby(c_prj)[c_val].sum().reset_index()
+                    df_grp_bar = df.groupby(c_prj)[c_val].sum().reset_index().sort_values(by=c_val, ascending=True)
                     fig_bar = go.Figure(go.Bar(
                         y=df_grp_bar[c_prj].astype(str), x=df_grp_bar[c_val], orientation='h', marker_color='#2563EB',
                         text=[f"R$ {x:,.2f}" for x in df_grp_bar[c_val]], textposition='inside',
