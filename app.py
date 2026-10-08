@@ -59,7 +59,7 @@ def auto_map_columns(df):
             
     if not col_val:
         cols_num = df.select_dtypes(include=['number']).columns
-        if len(cols_num) > 0: col_val = cols_num
+        if len(cols_num) > 0: col_val = cols_num[0]
     if not col_text:
         cols_obj = df.select_dtypes(include=['object']).columns
         col_text = list(cols_obj[:2])
@@ -81,15 +81,15 @@ if uploaded_file is not None:
             st.markdown("### 🎛️ Data Slicers")
             col_f1, col_f2 = st.columns(2)
             
-            # Alinhamento calibrado para as caixas de Dropdown dos filtros
+            # CORREÇÃO DA IA: Isolar estritamente a primeira string única do array de colunas mapeadas
             with col_f1:
-                lbl_f1 = c_txt if len(c_txt) > 0 else "Dimension 1"
-                opts_f1 = ["Todos"] + list(df[lbl_f1].astype(str).unique()) if len(c_txt) > 0 else ["Todos"]
+                lbl_f1 = c_txt[0] if (isinstance(c_txt, list) and len(c_txt) > 0) else (c_txt if c_txt else "Dimension 1")
+                opts_f1 = ["Todos"] + list(df[lbl_f1].astype(str).unique()) if lbl_f1 in df.columns else ["Todos"]
                 f1_select = st.selectbox(f"Filter by {lbl_f1}", opts_f1)
                 
             with col_f2:
-                if len(c_txt) > 1:
-                    lbl_f2 = c_txt
+                if isinstance(c_txt, list) and len(c_txt) > 1:
+                    lbl_f2 = c_txt[1]
                     opts_f2 = ["Todos"] + list(df[lbl_f2].astype(str).unique())
                 elif c_per:
                     lbl_f2 = c_per
@@ -98,15 +98,15 @@ if uploaded_file is not None:
                     lbl_f2, opts_f2 = "Dimension 2", ["Todos"]
                 f2_select = st.selectbox(f"Filter by {lbl_f2}", opts_f2)
 
-            # Aplicar filtros na base de dados com as margens corretas
-            if len(c_txt) > 0 and f1_select != "Todos":
+            # Aplicar filtros na base de dados com as variáveis individuais tratadas
+            if (isinstance(c_txt, list) and len(c_txt) > 0) and f1_select != "Todos":
                 df = df[df[lbl_f1].astype(str) == f1_select]
-            if f2_select != "Todos":
+            if f2_select != "Todos" and lbl_f2 in df.columns:
                 df = df[df[lbl_f2].astype(str) == f2_select]
 
-            # 4. Cartões de Indicadores de Desempenho
+            # 4. Cartões de Indicadores
             total_sum = df[c_val].sum()
-            is_finance = any(x in c_val.upper() for x in ['VALOR', 'PREÇO', 'PRECO', 'CUSTO', 'REAIS'])
+            is_finance = any(x in str(c_val).upper() for x in ['VALOR', 'PREÇO', 'PRECO', 'CUSTO', 'REAIS'])
             formatted_sum = f"R$ {total_sum:,.2f}" if is_finance else f"{total_sum:.1f}"
             
             c_card1, c_card2 = st.columns(2)
@@ -114,10 +114,9 @@ if uploaded_file is not None:
             c_card2.metric(label="Total Volumetric Rows", value=len(df))
 
             # 5. Gráfico de Barras Horizontal Dinâmico
-            grp_col = c_per if c_per else (c_txt if c_txt else df.columns)
+            grp_col = c_per if c_per else (lbl_f1 if lbl_f1 in df.columns else df.columns[0])
             df_grp = df.groupby(grp_col)[c_val].sum().reset_index()
             
-            # Forçar os eixos do gráfico a exibirem as categorias de texto limpas
             df_grp[grp_col] = df_grp[grp_col].astype(str)
             
             fig = go.Figure(go.Bar(
