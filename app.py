@@ -25,31 +25,35 @@ def processar_planilha_custos(file):
     extensao = file.name.split('.')[-1].lower()
     motor = 'pyxlsb' if extensao == 'xlsb' else 'openpyxl'
     
-    # Pular as primeiras 6 linhas de metadados para focar no cabeçalho real da linha 7
-    df = pd.read_excel(file, skiprows=6, engine=motor)
+    # 🕵️‍♂️ VARREDURA INTELIGENTE: Lê o arquivo bruto para achar a linha do cabeçalho real
+    df_raw = pd.read_excel(file, header=None, engine=motor)
     
-    # Limpar espaços em branco invisíveis no início ou fim dos títulos das colunas
+    linha_cabecalho = 0
+    for idx, row in df_raw.head(20).iterrows():
+        row_str = [str(x).upper().strip() for x in row.values]
+        if "VALOR" in row_str or "EMPRESA" in row_str or "CUSTO COM" in row_str:
+            linha_cabecalho = idx
+            break
+            
+    # Carrega os dados reais pulando até a linha correta identificada
+    df = pd.read_excel(file, skiprows=linha_cabecalho, engine=motor)
+    
+    # Limpar espaços em branco invisíveis nos títulos das colunas
     df.columns = [str(c).strip() for c in df.columns]
     
-    # Mapeamento estrito baseado nas posições e nomes reais da sua planilha (G, H, J, K, L)
-    mapeamento_colunas = {
-        'Projeto': [c for c in df.columns if 'PROJETO' in c.upper()] if [c for c in df.columns if 'PROJETO' in c.upper()] else None,
-        'Valor': [c for c in df.columns if 'VALOR' in c.upper()] if [c for c in df.columns if 'VALOR' in c.upper()] else None,
-        'Periodo': [c for c in df.columns if 'PERÍODO' in c.upper() or 'PERIODO' in c.upper()] if [c for c in df.columns if 'PERÍODO' in c.upper() or 'PERIODO' in c.upper()] else None,
-        'Empresa': [c for c in df.columns if 'EMPRESA' in c.upper()] if [c for c in df.columns if 'EMPRESA' in c.upper()] else None,
-        'Custo_Com': [c for c in df.columns if 'CUSTO' in c.upper()] if [c for c in df.columns if 'CUSTO' in c.upper()] else None
-    }
+    # Mapeamento dinâmico tolerando variações de acentuação e caixa
+    c_prj = [c for c in df.columns if 'PROJETO' in c.upper()]
+    c_val = [c for c in df.columns if 'VALOR' in c.upper()]
+    c_per = [c for c in df.columns if 'PERÍODO' in c.upper() or 'PERIODO' in c.upper()]
+    c_emp = [c for c in df.columns if 'EMPRESA' in c.upper()]
+    c_cst = [c for c in df.columns if 'CUSTO' in c.upper()]
     
-    if not mapeamento_colunas['Valor'] or not mapeamento_colunas['Periodo']:
+    if not c_val or not c_per:
         return pd.DataFrame(), None, None, None, None, None
 
-    c_prj = mapeamento_colunas['Projeto'][0]
-    c_val = mapeamento_colunas['Valor'][0]
-    c_per = mapeamento_colunas['Periodo'][0]
-    c_emp = mapeamento_colunas['Empresa'][0]
-    c_cst = mapeamento_colunas['Custo_Com'][0]
+    c_prj, c_val, c_per, c_emp, c_cst = c_prj[0], c_val[0], c_per[0], c_emp[0], c_cst[0]
 
-    # 🛠️ Limpeza profunda dos valores monetários (preservando sinais de negativo como o de Setembro)
+    # 🛠️ Limpeza profunda dos valores monetários (preservando o sinal de negativo -)
     df[c_val] = df[c_val].astype(str).str.replace('R$', '', regex=False).str.replace(' ', '', regex=False)
     df[c_val] = df[c_val].str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
     df[c_val] = pd.to_numeric(df[c_val].str.strip(), errors='coerce').fillna(0)
@@ -71,7 +75,7 @@ if uploaded_file is not None:
             col_f1, col_f2, col_f3 = st.columns(3)
             
             with col_f1:
-                # Forçar ordenação cronológica padrão de mercado (Janeiro a Dezembro)
+                # Ordenação cronológica padrão de mercado (Janeiro a Dezembro)
                 ordem_meses = ['JANEIRO', 'FEVEREIRO', 'MARÇO', 'ABRIL', 'MAIO', 'JUNHO', 'JULHO', 'AGOSTO', 'SETEMBRO', 'OUTUBRO', 'NOVEMBRO', 'DEZEMBRO']
                 meses_ativos = [m for m in ordem_meses if m in df[c_per].astype(str).str.upper().str.strip().unique()]
                 opts_per = ["Todos"] + meses_ativos
@@ -125,8 +129,7 @@ if uploaded_file is not None:
             with graph_col2:
                 st.markdown("#### Divisão Percentual por Categoria de Custo")
                 df_grp_pie = df.groupby(c_cst)[c_val].sum().reset_index()
-                # Filtrar valores negativos ou zerados para o gráfico de pizza renderizar corretamente
-                df_grp_pie = df_grp_pie[df_grp_pie[c_val] > 0]
+                df_grp_pie = df_grp_pie[df_grp_pie[c_val] > 0] # Filtrar créditos negativos para a pizza rodar limpa
                 
                 fig_pie = go.Figure(go.Pie(
                     labels=df_grp_pie[c_cst].astype(str), values=df_grp_pie[c_val],
