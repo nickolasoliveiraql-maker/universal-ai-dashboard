@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-# 1. App Styling & Dark Mode Customization
+# 1. Configuração da Página e Estilo Dark Mode
 st.set_page_config(layout="wide", page_title="AI Analytics Engine")
 st.markdown(
     """
@@ -17,13 +17,13 @@ st.markdown(
 st.title("🤖 Universal AI Analytics Engine")
 st.markdown("Upload any structured corporate Excel sheet to dynamically generate a dashboard.")
 
-# 2. THE GAME CHANGER: Native File Uploader Button
+# 2. Upload de Arquivos
 uploaded_file = st.file_uploader("Drag and drop your Excel file here (.xlsx)", type=["xlsx"])
 
 def find_and_clean_table(file):
     df_raw = pd.read_excel(file, header=None)
     
-    # Locate the best data row header dynamically
+    # Localizar a linha do cabeçalho de forma estatística
     best_row = 0
     max_filled = 0
     for idx, row in df_raw.head(15).iterrows():
@@ -43,7 +43,7 @@ def find_and_clean_table(file):
 
 def auto_map_columns(df):
     col_val, col_text, col_period = None, [], None
-    time_keywords = ['MÊS', 'MES', 'PERÍODO', 'PERIODO', 'DATA', 'WEEK', 'SEMANA', 'DIA']
+    time_keywords = ['MÊS', 'MES', 'PERÍODO', 'PERIODO', 'DATA', 'WEEK', 'SEMANA', 'DIA', 'SERVIÇO', 'SERVICO']
     val_keywords = ['VALOR', 'PREÇO', 'PRECO', 'CUSTO', 'TOTAL', 'HORAS', 'REAIS']
 
     for col in df.columns:
@@ -66,22 +66,22 @@ def auto_map_columns(df):
         
     return col_val, col_text, col_period
 
-# 3. Execution Pipeline (Triggers only when a file is uploaded)
+# 3. Processamento dos Dados
 if uploaded_file is not None:
     try:
         df = find_and_clean_table(uploaded_file)
         c_val, c_txt, c_per = auto_map_columns(df)
         
         if c_val:
-            # Clean currency metrics
+            # Limpar e converter valores financeiros/horas de forma segura
             df[c_val] = df[c_val].astype(str).str.replace('R$', '', regex=False).str.replace(' ', '', regex=False)
             df[c_val] = df[c_val].str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
             df[c_val] = pd.to_numeric(df[c_val].str.strip(), errors='coerce').fillna(0)
 
-            # 4. Render Layout & Slicers
             st.markdown("### 🎛️ Data Slicers")
             col_f1, col_f2 = st.columns(2)
             
+            # CORREÇÃO DO BUG: Forçar os elementos dos filtros a serem tratados estritamente como String (Texto)
             with col_f1:
                 lbl_f1 = c_txt[0] if len(c_txt) > 0 else "Dimension 1"
                 opts_f1 = ["Todos"] + sorted(list(df[lbl_f1].astype(str).unique())) if len(c_txt) > 0 else ["Todos"]
@@ -93,33 +93,37 @@ if uploaded_file is not None:
                     opts_f2 = ["Todos"] + sorted(list(df[lbl_f2].astype(str).unique()))
                 elif c_per:
                     lbl_f2 = c_per
-                    opts_f2 = ["Todos"] + list(df[lbl_f2].astype(str).unique())
+                    opts_f2 = ["Todos"] + sorted(list(df[lbl_f2].astype(str).unique()))
                 else:
                     lbl_f2, opts_f2 = "Dimension 2", ["Todos"]
                 f2_select = st.selectbox(f"Filter by {lbl_f2}", opts_f2)
 
-            # Apply Reactive Filters
+            # Aplicar filtros na base de dados
             if len(c_txt) > 0 and f1_select != "Todos":
                 df = df[df[lbl_f1].astype(str) == f1_select]
             if f2_select != "Todos":
                 df = df[df[lbl_f2].astype(str) == f2_select]
 
-            # 5. Metric Cards
+            # 4. Cartões de Indicadores
             total_sum = df[c_val].sum()
             is_finance = any(x in c_val.upper() for x in ['VALOR', 'PREÇO', 'PRECO', 'CUSTO', 'REAIS'])
-            formatted_sum = f"R$ {total_sum:,.2f}" if is_finance else f"{total_sum:.1f} hrs"
+            formatted_sum = f"R$ {total_sum:,.2f}" if is_finance else f"{total_sum:.1f}"
             
             c_card1, c_card2 = st.columns(2)
             c_card1.metric(label=f"Accumulated Metrics ({c_val})", value=formatted_sum)
             c_card2.metric(label="Total Volumetric Rows", value=len(df))
 
-            # 6. Interactive Plotly Chart
+            # 5. Gráfico de Barras Horizontal Dinâmico
             grp_col = c_per if c_per else (c_txt[0] if c_txt else df.columns[0])
             df_grp = df.groupby(grp_col)[c_val].sum().reset_index()
             
+            # Forçar os eixos do gráfico a exibirem as categorias de texto limpas
+            df_grp[grp_col] = df_grp[grp_col].astype(str)
+            
             fig = go.Figure(go.Bar(
                 y=df_grp[grp_col], x=df_grp[c_val], orientation='h', marker_color='#2563EB',
-                text=[f"R$ {x:,.2f}" if is_finance else f"{x:.1f}h" for x in df_grp[c_val]], textposition='inside'
+                text=[f"R$ {x:,.2f}" if is_finance else f"{x:.1f}" for x in df_grp[c_val]], textposition='inside',
+                textfont=dict(color='white', weight='bold')
             ))
             fig.update_layout(
                 paper_bgcolor='#1E1F22', plot_bgcolor='#1E1F22', font=dict(color='white'), height=350,
@@ -130,3 +134,4 @@ if uploaded_file is not None:
             
     except Exception as e:
         st.error(f"Structure Conflict: Ensure columns are unmerged and clean. Error log: {e}")
+
